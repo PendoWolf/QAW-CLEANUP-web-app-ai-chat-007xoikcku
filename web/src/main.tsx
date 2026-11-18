@@ -5,6 +5,14 @@ import App from "./App";
 import { AuthProvider } from "./auth/AuthContext";
 import "./styles.css";
 
+// Boot Pendo once, before anything renders, as an anonymous visitor. The signed-in user
+// and their account are identified in AuthProvider.
+pendo.initialize({
+  visitor: {
+    id: "",
+  },
+});
+
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <BrowserRouter>
