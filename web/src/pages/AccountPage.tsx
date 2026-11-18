@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from "react";
+import { trackEvent } from "../analytics/pendo";
 import { usersApi } from "../api/users";
 import { useAuth } from "../auth/AuthContext";
 
@@ -18,8 +19,15 @@ export function AccountPage() {
     event.preventDefault();
     setSaving(true);
     setMessage(null);
+    const changes = { name: name.trim(), email: email.trim() };
     try {
-      updateUser(await usersApi.update(user.id, { name: name.trim(), email: email.trim() }));
+      updateUser(await usersApi.update(user.id, changes));
+      // The profile is saved. Only report which fields changed, never the name or email values.
+      trackEvent("profile_updated", {
+        nameChanged: changes.name !== user.name,
+        emailChanged: changes.email !== user.email,
+        role: user.role,
+      });
       setMessage("Profile saved.");
     } catch (e) {
       setMessage((e as Error).message);

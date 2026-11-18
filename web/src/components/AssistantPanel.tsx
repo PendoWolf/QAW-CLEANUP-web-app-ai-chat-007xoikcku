@@ -1,5 +1,10 @@
 import { useState, type FormEvent } from "react";
+import { trackEvent } from "../analytics/pendo";
 import { sendAssistantMessage, type ChatMessage } from "../api/assistant";
+import { ApiError } from "../api/client";
+
+/** Where a prompt came from: typed in the message box, or one of the suggested prompts. */
+type PromptSource = "typed" | "suggestion";
 
 const SUGGESTED_PROMPTS = [
   "Suggest a 3-day itinerary for my next trip",
@@ -23,7 +28,7 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
   const [thinking, setThinking] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const send = async (text: string) => {
+  const send = async (text: string, promptSource: PromptSource) => {
     const prompt = text.trim();
     if (prompt === "" || thinking) return;
     const userMessage: ChatMessage = { id: crypto.randomUUID(), role: "user", content: prompt };
@@ -32,11 +37,37 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
     setDraft("");
     setError(null);
     setThinking(true);
+    // What every assistant_response_received event shares. A typed prompt's text is never
+    // sent, only its length. The suggested prompts are fixed strings, so they're sent as is.
+    const startedAt = performance.now();
+    const promptProperties = {
+      conversationId,
+      promptSource,
+      suggestedPrompt: promptSource === "suggestion" ? prompt : undefined,
+      promptLength: prompt.length,
+    };
     try {
       const reply = await sendAssistantMessage(conversationId, conversation);
       setMessages((current) => [...current, reply.message]);
+      // The AI assistant answered.
+      trackEvent("assistant_response_received", {
+        ...promptProperties,
+        messageCount: conversation.length + 1,
+        responseLength: reply.message.content.length,
+        latencyMs: Math.round(performance.now() - startedAt),
+        success: true,
+      });
     } catch (e) {
       setError((e as Error).message);
+      // The AI assistant request failed. errorStatus is the API's HTTP status, and it's
+      // absent for a network failure.
+      trackEvent("assistant_response_received", {
+        ...promptProperties,
+        messageCount: conversation.length,
+        latencyMs: Math.round(performance.now() - startedAt),
+        success: false,
+        errorStatus: e instanceof ApiError ? e.status : undefined,
+      });
     } finally {
       setThinking(false);
     }
@@ -44,7 +75,7 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
 
   const submit = (event: FormEvent) => {
     event.preventDefault();
-    void send(draft);
+    void send(draft, "typed");
   };
 
   const startNewChat = () => {
@@ -73,7 +104,12 @@ export function AssistantPanel({ onClose }: { onClose: () => void }) {
             Ask me anything about planning a trip.
             <div className="suggestions">
               {SUGGESTED_PROMPTS.map((prompt) => (
-                <button key={prompt} type="button" className="secondary" onClick={() => void send(prompt)}>
+                <button
+                  key={prompt}
+                  type="button"
+                  className="secondary"
+                  onClick={() => void send(prompt, "suggestion")}
+                >
                   {prompt}
                 </button>
               ))}
